@@ -206,7 +206,7 @@ export default function ContainerSelecaoBidirecional({
         <div className="relative mb-3">
           <input
             type="text"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white"
             value={busca}
             onChange={(e) => {
               setBusca(e.target.value)
