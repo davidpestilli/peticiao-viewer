@@ -49,15 +49,12 @@ export default function EstruturaErro() {
   const carregarCompetencias = async () => {
     setLoadingCompetencias(true)
     try {
+      // null = por categorizar (classificacao IS NULL)
+      // 'todos' = todos os categorizados (classificacao IS NOT NULL)
+      // 'combinacao_impossivel', 'erro_corrigivel', 'erro_sistema' = filtro específico
       const classificacaoFiltro = estadoAtivo === 'por_categorizar' ? null : filtroClassificacao
       const data = await getCompetenciasComErros(classificacaoFiltro)
-
-      if (estadoAtivo === 'por_categorizar') {
-        // Filtrar apenas os não analisados (classificacao = null)
-        setCompetencias(data.filter(c => c.totalNaoAnalisados > 0 || !c.classificacao))
-      } else {
-        setCompetencias(data)
-      }
+      setCompetencias(data)
     } catch (error) {
       console.error('Erro ao carregar competências:', error)
       setCompetencias([])
@@ -297,11 +294,15 @@ export default function EstruturaErro() {
                         ? estadoAtivo === 'por_categorizar'
                           ? 'bg-red-500 text-white border-red-700'
                           : 'bg-green-500 text-white border-green-700'
-                        : 'bg-gray-50 hover:bg-gray-100 border-gray-200'
+                        : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-800'
                     }`}
                   >
-                    <div className="font-bold">[{comp.codigo}]</div>
-                    <div className="text-sm mt-1 truncate">{comp.nome}</div>
+                    <div className={`font-bold ${
+                      competenciaSelecionada?.codigo === comp.codigo ? '' : 'text-gray-800'
+                    }`}>[{comp.codigo}]</div>
+                    <div className={`text-sm mt-1 truncate ${
+                      competenciaSelecionada?.codigo === comp.codigo ? '' : 'text-gray-700'
+                    }`}>{comp.nome}</div>
                     <div className={`text-xs mt-2 flex items-center gap-1 ${
                       competenciaSelecionada?.codigo === comp.codigo ? 'opacity-80' : 'text-gray-600'
                     }`}>
@@ -361,7 +362,7 @@ export default function EstruturaErro() {
                         ? estadoAtivo === 'por_categorizar'
                           ? 'bg-orange-500 text-white border-orange-700'
                           : 'bg-teal-500 text-white border-teal-700'
-                        : 'bg-gray-50 hover:bg-gray-100 border-gray-200'
+                        : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-800'
                     }`}
                   >
                     <div className="font-bold">[{classe.codigo}]</div>
@@ -421,7 +422,7 @@ export default function EstruturaErro() {
                   return (
                     <div
                       key={chave}
-                      className="p-3 rounded-lg border-2 border-gray-200 bg-white cursor-pointer hover:border-purple-300"
+                      className="p-3 rounded-lg border-2 border-gray-200 bg-white cursor-pointer hover:border-purple-300 text-gray-800"
                       onClick={() => setErroExpandido(isExpandido ? null : chave)}
                     >
                       {estadoAtivo === 'categorizados' && (

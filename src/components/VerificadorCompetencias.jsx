@@ -34,11 +34,16 @@ export default function VerificadorCompetencias() {
   const carregarGruposDivergencias = async () => {
     setCarregandoGrupos(true)
     try {
-      const grupos = await getDivergenciasAgrupadas()
+      // Atualizar estatísticas e grupos ao mesmo tempo
+      const [stats, grupos] = await Promise.all([
+        getVerificacaoStats(),
+        getDivergenciasAgrupadas()
+      ])
+      setEstatisticas(stats)
       setGruposDivergencias(grupos)
       setGruposExpandidos({})
     } catch (error) {
-      console.error('Erro ao carregar grupos:', error)
+      console.error('Erro ao carregar dados:', error)
     } finally {
       setCarregandoGrupos(false)
     }
@@ -67,11 +72,19 @@ export default function VerificadorCompetencias() {
     const chave = `${grupo.competencia_de.codigo}|${grupo.competencia_para.codigo}`
 
     try {
+      console.log('[VerificadorCompetencias] Carregando processos:', {
+        codigoDe: grupo.competencia_de.codigo,
+        codigoPara: grupo.competencia_para.codigo,
+        page
+      })
+
       const result = await getProcessosDivergentes(
         grupo.competencia_de.codigo,
         grupo.competencia_para.codigo,
         page
       )
+
+      console.log('[VerificadorCompetencias] Processos carregados:', result)
 
       setGruposExpandidos(prev => ({
         ...prev,
@@ -84,7 +97,7 @@ export default function VerificadorCompetencias() {
         }
       }))
     } catch (error) {
-      console.error('Erro ao carregar processos:', error)
+      console.error('[VerificadorCompetencias] Erro ao carregar processos:', error)
       setGruposExpandidos(prev => ({
         ...prev,
         [chave]: { ...prev[chave], loading: false }

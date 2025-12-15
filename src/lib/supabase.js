@@ -97,6 +97,47 @@ export async function getAssuntosPorClasse(codigoLocalidade, codigoCompetencia, 
 }
 
 /**
+ * Estrutura Real - Todas as classes de uma localidade (modo flexível)
+ */
+export async function getTodasClassesPorLocalidade(codigoLocalidade) {
+  if (!supabase) return []
+
+  const { data, error } = await supabase
+    .from('cache_estrutura_real')
+    .select('codigo_classe, nome_classe')
+    .eq('codigo_localidade', codigoLocalidade)
+    .order('nome_classe')
+
+  if (error) {
+    console.error('Erro ao buscar todas as classes:', error)
+    return []
+  }
+
+  const unique = [...new Map(data.map(item => [item.codigo_classe, item])).values()]
+  return unique
+}
+
+/**
+ * Estrutura Real - Todos os assuntos de uma classe na localidade (modo flexível)
+ */
+export async function getTodosAssuntosPorClasse(codigoLocalidade, codigoClasse) {
+  if (!supabase) return []
+
+  const { data, error } = await supabase
+    .from('cache_estrutura_real')
+    .select('*')
+    .eq('codigo_localidade', codigoLocalidade)
+    .eq('codigo_classe', codigoClasse)
+    .order('nome_assunto')
+
+  if (error) {
+    console.error('Erro ao buscar todos os assuntos:', error)
+    return []
+  }
+  return data || []
+}
+
+/**
  * Estatísticas de Competências
  */
 export async function getEstatisticasCompetencias(sistema = null) {
@@ -122,184 +163,500 @@ export async function getEstatisticasCompetencias(sistema = null) {
 
 /**
  * Estrutura do Erro - Resumo de classificações
+ * Busca diretamente da tabela analise_erros_hierarquica (fonte real dos dados)
+ * e soma os total_ocorrencias por classificação
  */
 export async function getResumoClassificacoes() {
   if (!supabase) return { nao_analisados: 0, combinacao_impossivel: 0, erro_corrigivel: 0, erro_sistema: 0 }
 
-  const { data, error } = await supabase
-    .from('cache_resumo_classificacoes')
-    .select('*')
-    .single()
+  try {
+    // Buscar todos os registros com paginação para calcular totais corretos
+    const PAGE_SIZE = 1000
+    let allData = []
+    let offset = 0
+    let hasMore = true
 
-  if (error) {
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('analise_erros_hierarquica')
+        .select('classificacao, total_ocorrencias')
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (error) {
+        console.error('Erro ao buscar resumo:', error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data)
+        offset += PAGE_SIZE
+        hasMore = data.length === PAGE_SIZE
+      } else {
+        hasMore = false
+      }
+    }
+
+    // Calcular totais por classificação
+    const resumo = {
+      nao_analisados: 0,
+      combinacao_impossivel: 0,
+      erro_corrigivel: 0,
+      erro_sistema: 0
+    }
+
+    for (const row of allData) {
+      const ocorrencias = row.total_ocorrencias || 1
+      if (row.classificacao === null) {
+        resumo.nao_analisados += ocorrencias
+      } else if (row.classificacao === 'combinacao_impossivel') {
+        resumo.combinacao_impossivel += ocorrencias
+      } else if (row.classificacao === 'erro_corrigivel') {
+        resumo.erro_corrigivel += ocorrencias
+      } else if (row.classificacao === 'erro_sistema') {
+        resumo.erro_sistema += ocorrencias
+      }
+    }
+
+    return resumo
+  } catch (error) {
     console.error('Erro ao buscar resumo:', error)
     return { nao_analisados: 0, combinacao_impossivel: 0, erro_corrigivel: 0, erro_sistema: 0 }
   }
-  return data || { nao_analisados: 0, combinacao_impossivel: 0, erro_corrigivel: 0, erro_sistema: 0 }
 }
 
 /**
  * Estrutura do Erro - Competências com erros
+ * Busca diretamente de analise_erros_hierarquica com paginação
+ * @param {string|null} classificacao - null para não analisados, 'todos' para todos classificados, ou tipo específico
  */
 export async function getCompetenciasComErros(classificacao = null) {
   if (!supabase) return []
 
-  let query = supabase
-    .from('cache_erros_hierarquicos')
-    .select('codigo_competencia, nome_competencia')
+  try {
+    const PAGE_SIZE = 1000
+    let allData = []
+    let offset = 0
+    let hasMore = true
 
-  if (classificacao && classificacao !== 'todos') {
-    query = query.eq('classificacao', classificacao)
-  }
+    while (hasMore) {
+      let query = supabase
+        .from('analise_erros_hierarquica')
+        .select('codigo_competencia, nome_competencia, total_ocorrencias, classificacao')
+        .range(offset, offset + PAGE_SIZE - 1)
 
-  const { data, error } = await query
+      // Filtrar por classificação
+      if (classificacao === null) {
+        // Por categorizar: classificacao IS NULL
+        query = query.is('classificacao', null)
+      } else if (classificacao === 'todos') {
+        // Todos os classificados: classificacao IS NOT NULL
+        query = query.not('classificacao', 'is', null)
+      } else if (classificacao) {
+        // Classificação específica
+        query = query.eq('classificacao', classificacao)
+      }
 
-  if (error) {
-    console.error('Erro ao buscar competências com erros:', error)
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Erro ao buscar competências:', error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data)
+        offset += PAGE_SIZE
+        hasMore = data.length === PAGE_SIZE
+      } else {
+        hasMore = false
+      }
+    }
+
+    // Agrupar e somar total_ocorrencias por competência
+    const grouped = allData.reduce((acc, item) => {
+      const key = item.codigo_competencia
+      if (!acc[key]) {
+        acc[key] = {
+          codigo: key,
+          nome: item.nome_competencia,
+          totalErros: 0,
+          totalNaoAnalisados: 0
+        }
+      }
+      const ocorrencias = item.total_ocorrencias || 1
+      acc[key].totalErros += ocorrencias
+      if (item.classificacao === null) {
+        acc[key].totalNaoAnalisados += ocorrencias
+      }
+      return acc
+    }, {})
+
+    return Object.values(grouped).sort((a, b) => b.totalErros - a.totalErros)
+  } catch (error) {
+    console.error('Erro ao buscar competências:', error)
     return []
   }
-
-  // Agrupar e contar
-  const grouped = data.reduce((acc, item) => {
-    const key = item.codigo_competencia
-    if (!acc[key]) {
-      acc[key] = { codigo: key, nome: item.nome_competencia, totalErros: 0 }
-    }
-    acc[key].totalErros++
-    return acc
-  }, {})
-
-  return Object.values(grouped).sort((a, b) => b.totalErros - a.totalErros)
 }
 
 /**
  * Estrutura do Erro - Classes por competência
+ * Busca diretamente de analise_erros_hierarquica com paginação
  */
 export async function getClassesComErros(codigoCompetencia, classificacao = null) {
   if (!supabase) return []
 
-  let query = supabase
-    .from('cache_erros_hierarquicos')
-    .select('codigo_classe, nome_classe')
-    .eq('codigo_competencia', codigoCompetencia)
+  try {
+    const PAGE_SIZE = 1000
+    let allData = []
+    let offset = 0
+    let hasMore = true
 
-  if (classificacao && classificacao !== 'todos') {
-    query = query.eq('classificacao', classificacao)
-  }
+    while (hasMore) {
+      let query = supabase
+        .from('analise_erros_hierarquica')
+        .select('codigo_classe, nome_classe, total_ocorrencias, classificacao')
+        .eq('codigo_competencia', codigoCompetencia)
+        .range(offset, offset + PAGE_SIZE - 1)
 
-  const { data, error } = await query
+      // Filtrar por classificação
+      if (classificacao === null) {
+        query = query.is('classificacao', null)
+      } else if (classificacao === 'todos') {
+        query = query.not('classificacao', 'is', null)
+      } else if (classificacao) {
+        query = query.eq('classificacao', classificacao)
+      }
 
-  if (error) {
-    console.error('Erro ao buscar classes com erros:', error)
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Erro ao buscar classes:', error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data)
+        offset += PAGE_SIZE
+        hasMore = data.length === PAGE_SIZE
+      } else {
+        hasMore = false
+      }
+    }
+
+    // Agrupar e somar total_ocorrencias por classe
+    const grouped = allData.reduce((acc, item) => {
+      const key = item.codigo_classe
+      if (!acc[key]) {
+        acc[key] = {
+          codigo: key,
+          nome: item.nome_classe,
+          totalErros: 0,
+          totalNaoAnalisados: 0
+        }
+      }
+      const ocorrencias = item.total_ocorrencias || 1
+      acc[key].totalErros += ocorrencias
+      if (item.classificacao === null) {
+        acc[key].totalNaoAnalisados += ocorrencias
+      }
+      return acc
+    }, {})
+
+    return Object.values(grouped).sort((a, b) => b.totalErros - a.totalErros)
+  } catch (error) {
+    console.error('Erro ao buscar classes:', error)
     return []
   }
-
-  // Agrupar e contar
-  const grouped = data.reduce((acc, item) => {
-    const key = item.codigo_classe
-    if (!acc[key]) {
-      acc[key] = { codigo: key, nome: item.nome_classe, totalErros: 0 }
-    }
-    acc[key].totalErros++
-    return acc
-  }, {})
-
-  return Object.values(grouped).sort((a, b) => b.totalErros - a.totalErros)
 }
 
 /**
  * Estrutura do Erro - Erros por classe
+ * Busca diretamente de analise_erros_hierarquica com paginação
  */
 export async function getErrosPorClasse(codigoCompetencia, codigoClasse, classificacao = null) {
   if (!supabase) return []
 
-  let query = supabase
-    .from('cache_erros_hierarquicos')
-    .select('*')
-    .eq('codigo_competencia', codigoCompetencia)
-    .eq('codigo_classe', codigoClasse)
+  try {
+    const PAGE_SIZE = 1000
+    let allData = []
+    let offset = 0
+    let hasMore = true
 
-  if (classificacao && classificacao !== 'todos') {
-    query = query.eq('classificacao', classificacao)
-  }
+    while (hasMore) {
+      let query = supabase
+        .from('analise_erros_hierarquica')
+        .select('*')
+        .eq('codigo_competencia', codigoCompetencia)
+        .eq('codigo_classe', codigoClasse)
+        .order('total_ocorrencias', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1)
 
-  const { data, error } = await query.order('total_ocorrencias', { ascending: false })
+      // Filtrar por classificação
+      if (classificacao === null) {
+        query = query.is('classificacao', null)
+      } else if (classificacao === 'todos') {
+        query = query.not('classificacao', 'is', null)
+      } else if (classificacao) {
+        query = query.eq('classificacao', classificacao)
+      }
 
-  if (error) {
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Erro ao buscar erros:', error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data)
+        offset += PAGE_SIZE
+        hasMore = data.length === PAGE_SIZE
+      } else {
+        hasMore = false
+      }
+    }
+
+    return allData
+  } catch (error) {
     console.error('Erro ao buscar erros:', error)
     return []
   }
-  return data || []
 }
 
 /**
  * Verificador - Estatísticas gerais
+ * Busca diretamente de processos_criados (igual ao backend do peticiao)
  */
 export async function getVerificacaoStats() {
   if (!supabase) return { total: 0, verificados: 0, nao_verificados: 0, divergentes: 0, taxa_divergencia: 0 }
 
-  const { data, error } = await supabase
-    .from('cache_verificacao_stats')
-    .select('*')
-    .single()
+  try {
+    // Buscar TODOS os processos com paginação (Supabase limita a 1000 por query)
+    const TAMANHO_PAGINA = 1000
+    let todosProcessos = []
+    let offset = 0
+    let temMais = true
 
-  if (error) {
-    console.error('Erro ao buscar stats verificação:', error)
+    while (temMais) {
+      const { data: pagina, error } = await supabase
+        .from('processos_criados')
+        .select('id, data_verificacao, competencias_divergem')
+        .range(offset, offset + TAMANHO_PAGINA - 1)
+
+      if (error) {
+        console.error('Erro ao buscar processos:', error)
+        break
+      }
+
+      if (!pagina || pagina.length === 0) {
+        temMais = false
+      } else {
+        todosProcessos = todosProcessos.concat(pagina)
+        offset += TAMANHO_PAGINA
+
+        if (pagina.length < TAMANHO_PAGINA) {
+          temMais = false
+        }
+      }
+    }
+
+    const todos = todosProcessos
+
+    // Total de processos
+    const total = todos?.length || 0
+
+    // Processos já verificados
+    const verificados = todos?.filter(p => p.data_verificacao !== null).length || 0
+
+    // Processos não verificados
+    const nao_verificados = total - verificados
+
+    // Processos com divergência
+    const divergentes = todos?.filter(p => p.competencias_divergem === true).length || 0
+
+    // Taxa de divergência
+    const taxa_divergencia = verificados > 0 ? (divergentes / verificados) * 100 : 0
+
+    return {
+      total,
+      verificados,
+      nao_verificados,
+      divergentes,
+      taxa_divergencia: Math.round(taxa_divergencia * 10) / 10
+    }
+  } catch (error) {
+    console.error('Erro ao obter estatísticas:', error)
     return { total: 0, verificados: 0, nao_verificados: 0, divergentes: 0, taxa_divergencia: 0 }
   }
-  return data || { total: 0, verificados: 0, nao_verificados: 0, divergentes: 0, taxa_divergencia: 0 }
 }
 
 /**
  * Verificador - Divergências agrupadas
+ * Busca diretamente de processos_criados e agrupa (igual ao backend do peticiao)
  */
 export async function getDivergenciasAgrupadas() {
   if (!supabase) return []
 
-  const { data, error } = await supabase
-    .from('cache_divergencias_agrupadas')
-    .select('*')
-    .order('quantidade', { ascending: false })
+  try {
+    // Buscar com paginação
+    const TAMANHO_PAGINA = 1000
+    let todosProcessos = []
+    let offset = 0
+    let temMais = true
 
-  if (error) {
-    console.error('Erro ao buscar divergências:', error)
+    while (temMais) {
+      const { data: pagina, error } = await supabase
+        .from('processos_criados')
+        .select(`
+          codigo_competencia_peticionamento,
+          nome_competencia_peticionamento,
+          codigo_competencia_consulta,
+          nome_competencia_consulta,
+          roteamento_confirmado
+        `)
+        .eq('competencias_divergem', true)
+        .range(offset, offset + TAMANHO_PAGINA - 1)
+
+      if (error) {
+        console.error('Erro ao buscar divergências:', error)
+        break
+      }
+
+      if (!pagina || pagina.length === 0) {
+        temMais = false
+      } else {
+        todosProcessos = todosProcessos.concat(pagina)
+        offset += TAMANHO_PAGINA
+
+        if (pagina.length < TAMANHO_PAGINA) {
+          temMais = false
+        }
+      }
+    }
+
+    // Agrupar por combinação DE → PARA
+    const grupos = {}
+
+    for (const proc of todosProcessos) {
+      const chave = `${proc.codigo_competencia_peticionamento}|${proc.codigo_competencia_consulta}`
+
+      if (!grupos[chave]) {
+        grupos[chave] = {
+          competencia_de: {
+            codigo: proc.codigo_competencia_peticionamento,
+            nome: proc.nome_competencia_peticionamento
+          },
+          competencia_para: {
+            codigo: proc.codigo_competencia_consulta,
+            nome: proc.nome_competencia_consulta
+          },
+          quantidade: 0,
+          quantidadeConfirmados: 0,
+          roteamentoConfirmado: false
+        }
+      }
+
+      grupos[chave].quantidade++
+
+      if (proc.roteamento_confirmado === true) {
+        grupos[chave].quantidadeConfirmados++
+      }
+    }
+
+    // Marcar grupos onde TODOS os processos foram confirmados
+    const resultado = Object.values(grupos).map(g => ({
+      ...g,
+      roteamentoConfirmado: g.quantidadeConfirmados === g.quantidade
+    }))
+
+    // Ordenar por quantidade (maior primeiro)
+    resultado.sort((a, b) => b.quantidade - a.quantidade)
+
+    return resultado
+  } catch (error) {
+    console.error('Erro ao buscar divergências agrupadas:', error)
     return []
   }
-
-  // Formatar para o componente
-  return (data || []).map(d => ({
-    competencia_de: { codigo: d.codigo_competencia_de, nome: d.nome_competencia_de },
-    competencia_para: { codigo: d.codigo_competencia_para, nome: d.nome_competencia_para },
-    quantidade: d.quantidade,
-    roteamentoConfirmado: d.roteamento_confirmado
-  }))
 }
 
 /**
  * Verificador - Processos de um grupo de divergência
+ * Busca diretamente de processos_criados (igual ao backend do peticiao)
  */
 export async function getProcessosDivergentes(codigoDe, codigoPara, page = 1, limit = 50) {
   if (!supabase) return { processos: [], total: 0, page: 1, totalPages: 1 }
 
   const offset = (page - 1) * limit
 
-  const { data, error, count } = await supabase
-    .from('cache_processos_divergentes')
-    .select('*', { count: 'exact' })
-    .eq('codigo_competencia_de', codigoDe)
-    .eq('codigo_competencia_para', codigoPara)
-    .order('data_verificacao', { ascending: false })
-    .range(offset, offset + limit - 1)
+  try {
+    console.log('[getProcessosDivergentes] Buscando processos:', { codigoDe, codigoPara, page, limit, offset })
 
-  if (error) {
-    console.error('Erro ao buscar processos:', error)
+    // Buscar total
+    const { count, error: countError } = await supabase
+      .from('processos_criados')
+      .select('*', { count: 'exact', head: true })
+      .eq('codigo_competencia_peticionamento', codigoDe)
+      .eq('codigo_competencia_consulta', codigoPara)
+      .eq('competencias_divergem', true)
+
+    if (countError) {
+      console.error('[getProcessosDivergentes] Erro ao contar:', countError)
+    }
+
+    console.log('[getProcessosDivergentes] Total encontrado:', count)
+
+    // Buscar página (com JOIN para pegar classe e assunto de teste_combinacoes)
+    const { data, error } = await supabase
+      .from('processos_criados')
+      .select(`
+        numero_processo,
+        codigo_competencia_peticionamento,
+        nome_competencia_peticionamento,
+        codigo_competencia_consulta,
+        nome_competencia_consulta,
+        data_verificacao,
+        teste_combinacoes:teste_combinacao_id (
+          codigo_classe,
+          nome_classe,
+          codigo_assunto,
+          nome_assunto
+        )
+      `)
+      .eq('codigo_competencia_peticionamento', codigoDe)
+      .eq('codigo_competencia_consulta', codigoPara)
+      .eq('competencias_divergem', true)
+      .order('data_verificacao', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    if (error) {
+      console.error('[getProcessosDivergentes] Erro ao buscar processos:', error)
+      return { processos: [], total: 0, page: 1, totalPages: 1 }
+    }
+
+    console.log('[getProcessosDivergentes] Processos encontrados:', data?.length || 0)
+
+    // Mapear dados para o formato esperado (achatar o join)
+    const processosMapeados = (data || []).map(proc => ({
+      numero_processo: proc.numero_processo,
+      codigo_competencia_peticionamento: proc.codigo_competencia_peticionamento,
+      nome_competencia_peticionamento: proc.nome_competencia_peticionamento,
+      codigo_competencia_consulta: proc.codigo_competencia_consulta,
+      nome_competencia_consulta: proc.nome_competencia_consulta,
+      data_verificacao: proc.data_verificacao,
+      codigo_classe: proc.teste_combinacoes?.codigo_classe,
+      nome_classe: proc.teste_combinacoes?.nome_classe,
+      codigo_assunto: proc.teste_combinacoes?.codigo_assunto,
+      nome_assunto: proc.teste_combinacoes?.nome_assunto
+    }))
+
+    return {
+      processos: processosMapeados,
+      total: count || 0,
+      page,
+      totalPages: Math.ceil((count || 0) / limit)
+    }
+  } catch (error) {
+    console.error('[getProcessosDivergentes] Erro geral:', error)
     return { processos: [], total: 0, page: 1, totalPages: 1 }
-  }
-
-  return {
-    processos: data || [],
-    total: count || 0,
-    page,
-    totalPages: Math.ceil((count || 0) / limit)
   }
 }

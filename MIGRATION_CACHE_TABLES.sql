@@ -164,7 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_cache_proc_div_competencias
 -- HABILITAR RLS (Row Level Security) PARA LEITURA PÚBLICA
 -- ============================================
 
--- Desabilitar RLS para permitir leitura anônima
+-- Habilitar RLS nas tabelas de cache
 ALTER TABLE cache_localidades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cache_estrutura_real ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cache_stats_competencias ENABLE ROW LEVEL SECURITY;
@@ -183,6 +183,28 @@ CREATE POLICY "Allow public read" ON cache_erros_hierarquicos FOR SELECT USING (
 CREATE POLICY "Allow public read" ON cache_verificacao_stats FOR SELECT USING (true);
 CREATE POLICY "Allow public read" ON cache_divergencias_agrupadas FOR SELECT USING (true);
 CREATE POLICY "Allow public read" ON cache_processos_divergentes FOR SELECT USING (true);
+
+-- ============================================
+-- HABILITAR LEITURA PÚBLICA NA TABELA FONTE (analise_erros_hierarquica)
+-- ============================================
+-- O peticiao-viewer busca diretamente da tabela analise_erros_hierarquica
+-- que é a fonte real dos dados de erros (139 mil+ registros categorizados)
+-- em vez da tabela cache_erros_hierarquicos que tinha dados incompletos.
+
+-- Habilitar RLS se ainda não estiver habilitado
+ALTER TABLE analise_erros_hierarquica ENABLE ROW LEVEL SECURITY;
+
+-- Criar política de leitura pública (ignora erro se já existir)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'analise_erros_hierarquica'
+        AND policyname = 'Allow public read'
+    ) THEN
+        CREATE POLICY "Allow public read" ON analise_erros_hierarquica FOR SELECT USING (true);
+    END IF;
+END $$;
 
 -- ============================================
 -- VERIFICAÇÃO
