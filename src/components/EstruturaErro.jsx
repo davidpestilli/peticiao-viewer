@@ -5,6 +5,7 @@ import {
   getClassesComErros,
   getErrosPorClasse
 } from '../lib/supabase'
+import AbaSelecaoFlexivelErros from './AbaSelecaoFlexivelErros'
 
 export default function EstruturaErro() {
   const [estadoAtivo, setEstadoAtivo] = useState('por_categorizar')
@@ -184,6 +185,18 @@ export default function EstruturaErro() {
             {totalCategorizados}
           </span>
         </button>
+
+        <button
+          onClick={() => setEstadoAtivo('selecao_flexivel')}
+          className={`flex-1 py-4 px-6 rounded-lg font-bold text-lg transition-all flex items-center justify-center gap-3 ${
+            estadoAtivo === 'selecao_flexivel'
+              ? 'bg-blue-500 text-white shadow-lg scale-105'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <span className="text-2xl">🔎</span>
+          <span>Seleção Flexível</span>
+        </button>
       </div>
 
       {/* Filtro de Classificação (apenas para Categorizados) */}
@@ -239,8 +252,13 @@ export default function EstruturaErro() {
         </div>
       )}
 
-      {/* Grid de 3 Colunas */}
-      {estadoAtivo === 'por_categorizar' && !loadingCompetencias && competencias.length === 0 ? (
+      {/* Aba Seleção Flexível */}
+      {estadoAtivo === 'selecao_flexivel' && (
+        <AbaSelecaoFlexivelErros />
+      )}
+
+      {/* Mensagem de parabéns quando não há erros para categorizar */}
+      {estadoAtivo === 'por_categorizar' && !loadingCompetencias && competencias.length === 0 && (
         <div className="card bg-green-50 border-2 border-green-300 text-center py-16">
           <div className="text-6xl mb-4">🎉</div>
           <h3 className="text-2xl font-bold text-green-800 mb-2">
@@ -250,7 +268,10 @@ export default function EstruturaErro() {
             Todos os erros foram classificados. Você pode visualizá-los na aba "Categorizados".
           </p>
         </div>
-      ) : (
+      )}
+
+      {/* Grid de 3 Colunas */}
+      {estadoAtivo !== 'selecao_flexivel' && !(estadoAtivo === 'por_categorizar' && !loadingCompetencias && competencias.length === 0) && (
         <div className="grid grid-cols-3 gap-4">
 
           {/* Container 1: Competências */}

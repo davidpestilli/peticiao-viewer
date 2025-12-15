@@ -660,3 +660,241 @@ export async function getProcessosDivergentes(codigoDe, codigoPara, page = 1, li
     return { processos: [], total: 0, page: 1, totalPages: 1 }
   }
 }
+
+// ==========================================================
+// SELEÇÃO FLEXÍVEL DE ERROS
+// ==========================================================
+
+/**
+ * Busca todas as opções de competências, classes e assuntos que têm erros
+ */
+export async function getTodasOpcoesErros() {
+  if (!supabase) return { competencias: [], classes: [], assuntos: [] }
+
+  try {
+    // Buscar todas as combinações que têm erro (independente de classificado)
+    const { data: combinacoes, error } = await supabase
+      .from('teste_combinacoes')
+      .select(`
+        codigo_competencia,
+        nome_competencia,
+        codigo_classe,
+        nome_classe,
+        codigo_assunto,
+        nome_assunto,
+        erro_texto
+      `)
+      .not('erro_texto', 'is', null)
+      .neq('erro_texto', '')
+
+    if (error) {
+      console.error('Erro ao buscar opções de erros:', error)
+      return { competencias: [], classes: [], assuntos: [] }
+    }
+
+    // Extrair competências únicas
+    const competenciasMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_competencia
+      if (!competenciasMap.has(key)) {
+        competenciasMap.set(key, {
+          codigo: c.codigo_competencia,
+          nome: c.nome_competencia,
+          quantidade: 1
+        })
+      } else {
+        competenciasMap.get(key).quantidade++
+      }
+    })
+
+    // Extrair classes únicas
+    const classesMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_classe
+      if (!classesMap.has(key)) {
+        classesMap.set(key, {
+          codigo: c.codigo_classe,
+          nome: c.nome_classe,
+          quantidade: 1
+        })
+      } else {
+        classesMap.get(key).quantidade++
+      }
+    })
+
+    // Extrair assuntos únicos
+    const assuntosMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_assunto
+      if (!assuntosMap.has(key)) {
+        assuntosMap.set(key, {
+          codigo: c.codigo_assunto,
+          nome: c.nome_assunto,
+          quantidade: 1
+        })
+      } else {
+        assuntosMap.get(key).quantidade++
+      }
+    })
+
+    return {
+      competencias: Array.from(competenciasMap.values()).sort((a, b) => b.quantidade - a.quantidade),
+      classes: Array.from(classesMap.values()).sort((a, b) => b.quantidade - a.quantidade),
+      assuntos: Array.from(assuntosMap.values()).sort((a, b) => b.quantidade - a.quantidade)
+    }
+  } catch (error) {
+    console.error('Erro ao buscar opções de erros:', error)
+    return { competencias: [], classes: [], assuntos: [] }
+  }
+}
+
+/**
+ * Busca opções filtradas baseadas nas seleções atuais
+ */
+export async function getOpcoesErrosFiltradas(competencia, classe, assunto) {
+  if (!supabase) return { competencias: [], classes: [], assuntos: [] }
+
+  try {
+    // Construir query base para combinações com erro
+    let query = supabase
+      .from('teste_combinacoes')
+      .select(`
+        codigo_competencia,
+        nome_competencia,
+        codigo_classe,
+        nome_classe,
+        codigo_assunto,
+        nome_assunto,
+        erro_texto
+      `)
+      .not('erro_texto', 'is', null)
+      .neq('erro_texto', '')
+
+    // Aplicar filtros se existirem
+    if (competencia) {
+      query = query.eq('codigo_competencia', competencia)
+    }
+    if (classe) {
+      query = query.eq('codigo_classe', classe)
+    }
+    if (assunto) {
+      query = query.eq('codigo_assunto', assunto)
+    }
+
+    const { data: combinacoes, error } = await query
+
+    if (error) {
+      console.error('Erro ao buscar opções filtradas de erros:', error)
+      return { competencias: [], classes: [], assuntos: [] }
+    }
+
+    // Extrair competências únicas
+    const competenciasMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_competencia
+      if (!competenciasMap.has(key)) {
+        competenciasMap.set(key, {
+          codigo: c.codigo_competencia,
+          nome: c.nome_competencia,
+          quantidade: 1
+        })
+      } else {
+        competenciasMap.get(key).quantidade++
+      }
+    })
+
+    // Extrair classes únicas
+    const classesMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_classe
+      if (!classesMap.has(key)) {
+        classesMap.set(key, {
+          codigo: c.codigo_classe,
+          nome: c.nome_classe,
+          quantidade: 1
+        })
+      } else {
+        classesMap.get(key).quantidade++
+      }
+    })
+
+    // Extrair assuntos únicos
+    const assuntosMap = new Map()
+    combinacoes.forEach(c => {
+      const key = c.codigo_assunto
+      if (!assuntosMap.has(key)) {
+        assuntosMap.set(key, {
+          codigo: c.codigo_assunto,
+          nome: c.nome_assunto,
+          quantidade: 1
+        })
+      } else {
+        assuntosMap.get(key).quantidade++
+      }
+    })
+
+    return {
+      competencias: Array.from(competenciasMap.values()).sort((a, b) => b.quantidade - a.quantidade),
+      classes: Array.from(classesMap.values()).sort((a, b) => b.quantidade - a.quantidade),
+      assuntos: Array.from(assuntosMap.values()).sort((a, b) => b.quantidade - a.quantidade)
+    }
+  } catch (error) {
+    console.error('Erro ao buscar opções filtradas de erros:', error)
+    return { competencias: [], classes: [], assuntos: [] }
+  }
+}
+
+/**
+ * Busca erros relacionados aos filtros selecionados
+ */
+export async function getErrosRelacionados(competencia, classe, assunto) {
+  if (!supabase) return []
+
+  try {
+    // Construir query
+    let query = supabase
+      .from('teste_combinacoes')
+      .select(`
+        id,
+        codigo_competencia,
+        nome_competencia,
+        codigo_classe,
+        nome_classe,
+        codigo_assunto,
+        nome_assunto,
+        erro_texto,
+        erro_classificado,
+        nome_erro_classificado,
+        created_at,
+        updated_at
+      `)
+      .not('erro_texto', 'is', null)
+      .neq('erro_texto', '')
+
+    // Aplicar filtros
+    if (competencia) {
+      query = query.eq('codigo_competencia', competencia)
+    }
+    if (classe) {
+      query = query.eq('codigo_classe', classe)
+    }
+    if (assunto) {
+      query = query.eq('codigo_assunto', assunto)
+    }
+
+    // Ordenar por data de atualização
+    query = query.order('updated_at', { ascending: false })
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error('Erro ao buscar erros relacionados:', error)
+      return []
+    }
+
+    return data || []
+  } catch (error) {
+    console.error('Erro ao buscar erros relacionados:', error)
+    return []
+  }
+}
