@@ -663,84 +663,85 @@ export async function getProcessosDivergentes(codigoDe, codigoPara, page = 1, li
 
 // ==========================================================
 // SELEÇÃO FLEXÍVEL DE ERROS
+// Usa as tabelas de cache para performance (cache_erros_*)
 // ==========================================================
 
 /**
+ * Helper para buscar com paginação
+ */
+async function buscarComPaginacao(tabela, select, queryBuilder = null, orderBy = null) {
+  if (!supabase) return []
+  
+  const PAGE_SIZE = 1000
+  let allData = []
+  let offset = 0
+  let hasMore = true
+
+  while (hasMore) {
+    let query = supabase
+      .from(tabela)
+      .select(select)
+      .range(offset, offset + PAGE_SIZE - 1)
+
+    if (queryBuilder) {
+      query = queryBuilder(query)
+    }
+    
+    if (orderBy) {
+      query = query.order(orderBy)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error(`Erro ao buscar ${tabela}:`, error)
+      break
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data)
+      offset += PAGE_SIZE
+      hasMore = data.length === PAGE_SIZE
+    } else {
+      hasMore = false
+    }
+  }
+
+  return allData
+}
+
+/**
  * Busca todas as opções de competências, classes e assuntos que têm erros
+ * Usa as tabelas de cache para performance
  */
 export async function getTodasOpcoesErros() {
   if (!supabase) return { competencias: [], classes: [], assuntos: [] }
 
   try {
-    // Buscar todas as combinações que têm erro (independente de classificado)
-    const { data: combinacoes, error } = await supabase
-      .from('teste_combinacoes')
-      .select(`
-        codigo_competencia,
-        nome_competencia,
-        codigo_classe,
-        nome_classe,
-        codigo_assunto,
-        nome_assunto,
-        erro_texto
-      `)
-      .not('erro_texto', 'is', null)
-      .neq('erro_texto', '')
-
-    if (error) {
-      console.error('Erro ao buscar opções de erros:', error)
-      return { competencias: [], classes: [], assuntos: [] }
-    }
-
-    // Extrair competências únicas
-    const competenciasMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_competencia
-      if (!competenciasMap.has(key)) {
-        competenciasMap.set(key, {
-          codigo: c.codigo_competencia,
-          nome: c.nome_competencia,
-          quantidade: 1
-        })
-      } else {
-        competenciasMap.get(key).quantidade++
-      }
-    })
-
-    // Extrair classes únicas
-    const classesMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_classe
-      if (!classesMap.has(key)) {
-        classesMap.set(key, {
-          codigo: c.codigo_classe,
-          nome: c.nome_classe,
-          quantidade: 1
-        })
-      } else {
-        classesMap.get(key).quantidade++
-      }
-    })
-
-    // Extrair assuntos únicos
-    const assuntosMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_assunto
-      if (!assuntosMap.has(key)) {
-        assuntosMap.set(key, {
-          codigo: c.codigo_assunto,
-          nome: c.nome_assunto,
-          quantidade: 1
-        })
-      } else {
-        assuntosMap.get(key).quantidade++
-      }
-    })
+    // Buscar de todas as tabelas de cache em paralelo com paginação
+    const [competencias, classes, assuntos] = await Promise.all([
+      buscarComPaginacao('cache_erros_competencias', '*', null, 'codigo_competencia'),
+      buscarComPaginacao('cache_erros_classes', '*', null, 'codigo_classe'),
+      buscarComPaginacao('cache_erros_assuntos', '*', null, 'codigo_assunto')
+    ])
 
     return {
-      competencias: Array.from(competenciasMap.values()).sort((a, b) => b.quantidade - a.quantidade),
-      classes: Array.from(classesMap.values()).sort((a, b) => b.quantidade - a.quantidade),
-      assuntos: Array.from(assuntosMap.values()).sort((a, b) => b.quantidade - a.quantidade)
+      competencias: competencias.map(c => ({
+        codigo: c.codigo_competencia,
+        nome: c.descricao_competencia || c.codigo_competencia,
+        descricao: c.descricao_competencia,
+        quantidade: c.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade),
+      classes: classes.map(c => ({
+        codigo: c.codigo_classe,
+        nome: c.nome_classe || c.codigo_classe,
+        quantidade: c.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade),
+      assuntos: assuntos.map(a => ({
+        codigo: a.codigo_assunto,
+        nome: a.nome_assunto || a.codigo_assunto,
+        quantidade: a.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade)
     }
   } catch (error) {
     console.error('Erro ao buscar opções de erros:', error)
@@ -750,93 +751,78 @@ export async function getTodasOpcoesErros() {
 
 /**
  * Busca opções filtradas baseadas nas seleções atuais
+ * Usa a tabela cache_erros_relacoes para filtros bidirecionais
  */
 export async function getOpcoesErrosFiltradas(competencia, classe, assunto) {
   if (!supabase) return { competencias: [], classes: [], assuntos: [] }
 
+  // Se nenhum filtro, retornar todas opções
+  if (!competencia && !classe && !assunto) {
+    return getTodasOpcoesErros()
+  }
+
   try {
-    // Construir query base para combinações com erro
-    let query = supabase
-      .from('teste_combinacoes')
-      .select(`
-        codigo_competencia,
-        nome_competencia,
-        codigo_classe,
-        nome_classe,
-        codigo_assunto,
-        nome_assunto,
-        erro_texto
-      `)
-      .not('erro_texto', 'is', null)
-      .neq('erro_texto', '')
-
-    // Aplicar filtros se existirem
-    if (competencia) {
-      query = query.eq('codigo_competencia', competencia)
-    }
-    if (classe) {
-      query = query.eq('codigo_classe', classe)
-    }
-    if (assunto) {
-      query = query.eq('codigo_assunto', assunto)
-    }
-
-    const { data: combinacoes, error } = await query
-
-    if (error) {
-      console.error('Erro ao buscar opções filtradas de erros:', error)
-      return { competencias: [], classes: [], assuntos: [] }
-    }
-
-    // Extrair competências únicas
-    const competenciasMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_competencia
-      if (!competenciasMap.has(key)) {
-        competenciasMap.set(key, {
-          codigo: c.codigo_competencia,
-          nome: c.nome_competencia,
-          quantidade: 1
-        })
-      } else {
-        competenciasMap.get(key).quantidade++
+    // Buscar relações com os filtros aplicados
+    const relacoes = await buscarComPaginacao(
+      'cache_erros_relacoes',
+      'codigo_competencia, codigo_classe, codigo_assunto, total_erros',
+      (query) => {
+        if (competencia) query = query.eq('codigo_competencia', competencia)
+        if (classe) query = query.eq('codigo_classe', classe)
+        if (assunto) query = query.eq('codigo_assunto', assunto)
+        return query
       }
-    })
+    )
 
-    // Extrair classes únicas
-    const classesMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_classe
-      if (!classesMap.has(key)) {
-        classesMap.set(key, {
-          codigo: c.codigo_classe,
-          nome: c.nome_classe,
-          quantidade: 1
-        })
-      } else {
-        classesMap.get(key).quantidade++
-      }
-    })
+    // Extrair IDs únicos das relações
+    const competenciasIds = [...new Set(relacoes.map(r => r.codigo_competencia).filter(Boolean))]
+    const classesIds = [...new Set(relacoes.map(r => r.codigo_classe).filter(Boolean))]
+    const assuntosIds = [...new Set(relacoes.map(r => r.codigo_assunto).filter(Boolean))]
 
-    // Extrair assuntos únicos
-    const assuntosMap = new Map()
-    combinacoes.forEach(c => {
-      const key = c.codigo_assunto
-      if (!assuntosMap.has(key)) {
-        assuntosMap.set(key, {
-          codigo: c.codigo_assunto,
-          nome: c.nome_assunto,
-          quantidade: 1
-        })
-      } else {
-        assuntosMap.get(key).quantidade++
+    // Buscar detalhes das tabelas de cache
+    const BATCH_SIZE = 100
+
+    const buscarDetalhesEmBatches = async (tabela, campoId, ids) => {
+      if (ids.length === 0) return []
+      
+      let resultados = []
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE)
+        const { data, error } = await supabase
+          .from(tabela)
+          .select('*')
+          .in(campoId, batch)
+
+        if (!error && data) {
+          resultados = resultados.concat(data)
+        }
       }
-    })
+      return resultados
+    }
+
+    const [competencias, classes, assuntos] = await Promise.all([
+      buscarDetalhesEmBatches('cache_erros_competencias', 'codigo_competencia', competenciasIds),
+      buscarDetalhesEmBatches('cache_erros_classes', 'codigo_classe', classesIds),
+      buscarDetalhesEmBatches('cache_erros_assuntos', 'codigo_assunto', assuntosIds)
+    ])
 
     return {
-      competencias: Array.from(competenciasMap.values()).sort((a, b) => b.quantidade - a.quantidade),
-      classes: Array.from(classesMap.values()).sort((a, b) => b.quantidade - a.quantidade),
-      assuntos: Array.from(assuntosMap.values()).sort((a, b) => b.quantidade - a.quantidade)
+      competencias: competencias.map(c => ({
+        codigo: c.codigo_competencia,
+        nome: c.descricao_competencia || c.codigo_competencia,
+        descricao: c.descricao_competencia,
+        quantidade: c.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade),
+      classes: classes.map(c => ({
+        codigo: c.codigo_classe,
+        nome: c.nome_classe || c.codigo_classe,
+        quantidade: c.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade),
+      assuntos: assuntos.map(a => ({
+        codigo: a.codigo_assunto,
+        nome: a.nome_assunto || a.codigo_assunto,
+        quantidade: a.total_erros || 0
+      })).sort((a, b) => b.quantidade - a.quantidade)
     }
   } catch (error) {
     console.error('Erro ao buscar opções filtradas de erros:', error)
@@ -846,53 +832,98 @@ export async function getOpcoesErrosFiltradas(competencia, classe, assunto) {
 
 /**
  * Busca erros relacionados aos filtros selecionados
+ * Busca da tabela analise_erros_hierarquica para detalhes
  */
 export async function getErrosRelacionados(competencia, classe, assunto) {
   if (!supabase) return []
 
+  // Se nenhum filtro, retornar vazio
+  if (!competencia && !classe && !assunto) {
+    return []
+  }
+
   try {
-    // Construir query
-    let query = supabase
-      .from('teste_combinacoes')
-      .select(`
+    // Buscar erros com paginação
+    const erros = await buscarComPaginacao(
+      'analise_erros_hierarquica',
+      `
         id,
         codigo_competencia,
         nome_competencia,
         codigo_classe,
         nome_classe,
-        codigo_assunto,
-        nome_assunto,
-        erro_texto,
-        erro_classificado,
-        nome_erro_classificado,
+        tipo_erro,
+        mensagem_erro_exemplo,
+        total_ocorrencias,
+        classificacao,
+        descricao_analise,
+        solucao_sugerida,
         created_at,
         updated_at
-      `)
-      .not('erro_texto', 'is', null)
-      .neq('erro_texto', '')
+      `,
+      (query) => {
+        if (competencia) query = query.eq('codigo_competencia', competencia)
+        if (classe) query = query.eq('codigo_classe', classe)
+        // Nota: assunto não está na tabela hierárquica
+        return query
+      },
+      'total_ocorrencias'
+    )
 
-    // Aplicar filtros
-    if (competencia) {
-      query = query.eq('codigo_competencia', competencia)
-    }
-    if (classe) {
-      query = query.eq('codigo_classe', classe)
-    }
+    // Se filtro de assunto foi aplicado, buscar também da teste_combinacoes
+    // para pegar os erros específicos do assunto
     if (assunto) {
-      query = query.eq('codigo_assunto', assunto)
+      const errosAssunto = await buscarComPaginacao(
+        'teste_combinacoes',
+        `
+          id,
+          codigo_competencia,
+          nome_competencia,
+          codigo_classe,
+          nome_classe,
+          codigo_assunto,
+          nome_assunto,
+          tipo_erro,
+          mensagem_erro,
+          created_at
+        `,
+        (query) => {
+          query = query.eq('status', 'erro')
+          if (competencia) query = query.eq('codigo_competencia', competencia)
+          if (classe) query = query.eq('codigo_classe', classe)
+          if (assunto) query = query.eq('codigo_assunto', assunto)
+          return query
+        }
+      )
+
+      // Agrupar erros por tipo para simular a estrutura hierárquica
+      const agrupados = new Map()
+      errosAssunto.forEach(e => {
+        const key = `${e.codigo_competencia}|${e.codigo_classe}|${e.tipo_erro}`
+        if (!agrupados.has(key)) {
+          agrupados.set(key, {
+            id: e.id,
+            codigo_competencia: e.codigo_competencia,
+            nome_competencia: e.nome_competencia,
+            codigo_classe: e.codigo_classe,
+            nome_classe: e.nome_classe,
+            codigo_assunto: e.codigo_assunto,
+            nome_assunto: e.nome_assunto,
+            tipo_erro: e.tipo_erro,
+            mensagem_erro_exemplo: e.mensagem_erro,
+            total_ocorrencias: 1,
+            created_at: e.created_at
+          })
+        } else {
+          agrupados.get(key).total_ocorrencias++
+        }
+      })
+
+      return Array.from(agrupados.values())
+        .sort((a, b) => b.total_ocorrencias - a.total_ocorrencias)
     }
 
-    // Ordenar por data de atualização
-    query = query.order('updated_at', { ascending: false })
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Erro ao buscar erros relacionados:', error)
-      return []
-    }
-
-    return data || []
+    return erros.sort((a, b) => (b.total_ocorrencias || 0) - (a.total_ocorrencias || 0))
   } catch (error) {
     console.error('Erro ao buscar erros relacionados:', error)
     return []

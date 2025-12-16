@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react'
 import { useFiltrosErrosBidirecionais } from '../hooks/useFiltrosErrosBidirecionais'
+import ContainerSelecaoBidirecional from './ContainerSelecaoBidirecional'
 
 /**
  * Componente de seleção flexível para erros
  * Permite buscar por competência, classe ou assunto
+ * Utiliza o ContainerSelecaoBidirecional com input de busca + select dropdown
  */
 function AbaSelecaoFlexivelErros() {
   const {
@@ -13,6 +15,7 @@ function AbaSelecaoFlexivelErros() {
     setClasseSelecionada,
     assuntoSelecionado,
     setAssuntoSelecionado,
+    todasOpcoes,
     opcoesFiltradas,
     errosRelacionados,
     resumoErros,
@@ -22,126 +25,82 @@ function AbaSelecaoFlexivelErros() {
     limparSelecoes
   } = useFiltrosErrosBidirecionais()
 
-  // Estado para busca em cada container
-  const [buscaCompetencia, setBuscaCompetencia] = useState('')
-  const [buscaClasse, setBuscaClasse] = useState('')
-  const [buscaAssunto, setBuscaAssunto] = useState('')
+  // Estado para controlar qual container está ativo (foco)
+  const [containerAtivo, setContainerAtivo] = useState(null)
 
   // Estado para erro expandido
   const [erroExpandido, setErroExpandido] = useState(null)
 
-  // Filtrar opções baseado na busca
-  const competenciasFiltradas = useMemo(() => {
-    if (!buscaCompetencia) return opcoesFiltradas.competencias
-    const termo = buscaCompetencia.toLowerCase()
-    return opcoesFiltradas.competencias.filter(c => 
-      c.nome.toLowerCase().includes(termo) || 
-      c.codigo.toString().includes(termo)
-    )
-  }, [opcoesFiltradas.competencias, buscaCompetencia])
+  // Transformar opções para formato esperado pelo ContainerSelecaoBidirecional
+  // O hook retorna arrays com {codigo, nome, quantidade}
+  // O componente espera objetos com codigo e nome/descricao
+  const transformarParaObjeto = (codigo, opcoes, campoNome) => {
+    if (!codigo) return null
+    const opcao = opcoes.find(o => o.codigo === codigo)
+    if (!opcao) return null
+    return {
+      codigo: opcao.codigo,
+      [campoNome]: opcao.nome,
+      total_ocorrencias: opcao.quantidade
+    }
+  }
 
-  const classesFiltradas = useMemo(() => {
-    if (!buscaClasse) return opcoesFiltradas.classes
-    const termo = buscaClasse.toLowerCase()
-    return opcoesFiltradas.classes.filter(c => 
-      c.nome.toLowerCase().includes(termo) || 
-      c.codigo.toString().includes(termo)
-    )
-  }, [opcoesFiltradas.classes, buscaClasse])
-
-  const assuntosFiltrados = useMemo(() => {
-    if (!buscaAssunto) return opcoesFiltradas.assuntos
-    const termo = buscaAssunto.toLowerCase()
-    return opcoesFiltradas.assuntos.filter(a => 
-      a.nome.toLowerCase().includes(termo) || 
-      a.codigo.toString().includes(termo)
-    )
-  }, [opcoesFiltradas.assuntos, buscaAssunto])
-
-  // Componente de item selecionável
-  const ItemSelecionavel = ({ item, selecionado, onClick, tipo }) => (
-    <div
-      onClick={() => onClick(selecionado ? null : item.codigo)}
-      className={`p-2 rounded cursor-pointer transition-colors border ${
-        selecionado 
-          ? 'bg-blue-600 text-white border-blue-700' 
-          : 'bg-gray-700 hover:bg-gray-600 border-gray-600'
-      }`}
-    >
-      <div className="flex justify-between items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-gray-400 mb-0.5">
-            {tipo} {item.codigo}
-          </div>
-          <div className="text-sm font-medium truncate" title={item.nome}>
-            {item.nome}
-          </div>
-        </div>
-        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-          selecionado ? 'bg-blue-500' : 'bg-gray-600'
-        }`}>
-          {item.quantidade}
-        </span>
-      </div>
-    </div>
+  // Valores selecionados como objetos (para ContainerSelecaoBidirecional)
+  const competenciaObj = useMemo(() => 
+    transformarParaObjeto(competenciaSelecionada, opcoesFiltradas.competencias, 'descricao'),
+    [competenciaSelecionada, opcoesFiltradas.competencias]
   )
 
-  // Container de seleção
-  const ContainerSelecao = ({ 
-    titulo, 
-    icone, 
-    items, 
-    itemSelecionado, 
-    setItemSelecionado, 
-    busca, 
-    setBusca,
-    tipo,
-    carregando 
-  }) => (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 flex flex-col h-full">
-      <div className="p-3 border-b border-gray-700">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-semibold text-white flex items-center gap-2">
-            <span>{icone}</span>
-            {titulo}
-            <span className="text-xs text-gray-400">({items.length})</span>
-          </h3>
-          {itemSelecionado && (
-            <button
-              onClick={() => setItemSelecionado(null)}
-              className="text-xs text-red-400 hover:text-red-300"
-            >
-              Limpar
-            </button>
-          )}
-        </div>
-        <input
-          type="text"
-          placeholder={`Buscar ${titulo.toLowerCase()}...`}
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1" style={{ maxHeight: '300px' }}>
-        {carregando ? (
-          <div className="text-center py-4 text-gray-400">Carregando...</div>
-        ) : items.length === 0 ? (
-          <div className="text-center py-4 text-gray-500">Nenhum item encontrado</div>
-        ) : (
-          items.map(item => (
-            <ItemSelecionavel
-              key={item.codigo}
-              item={item}
-              selecionado={itemSelecionado === item.codigo}
-              onClick={setItemSelecionado}
-              tipo={tipo}
-            />
-          ))
-        )}
-      </div>
-    </div>
+  const classeObj = useMemo(() => 
+    transformarParaObjeto(classeSelecionada, opcoesFiltradas.classes, 'nome'),
+    [classeSelecionada, opcoesFiltradas.classes]
   )
+
+  const assuntoObj = useMemo(() => 
+    transformarParaObjeto(assuntoSelecionado, opcoesFiltradas.assuntos, 'nome'),
+    [assuntoSelecionado, opcoesFiltradas.assuntos]
+  )
+
+  // Transformar opções para formato esperado pelo ContainerSelecaoBidirecional
+  const opcoesCompetencias = useMemo(() => 
+    opcoesFiltradas.competencias.map(c => ({
+      codigo: c.codigo,
+      descricao: c.nome,
+      total_ocorrencias: c.quantidade
+    })),
+    [opcoesFiltradas.competencias]
+  )
+
+  const opcoesClasses = useMemo(() => 
+    opcoesFiltradas.classes.map(c => ({
+      codigo: c.codigo,
+      nome: c.nome,
+      total_ocorrencias: c.quantidade
+    })),
+    [opcoesFiltradas.classes]
+  )
+
+  const opcoesAssuntos = useMemo(() => 
+    opcoesFiltradas.assuntos.map(a => ({
+      codigo: a.codigo,
+      nome: a.nome,
+      total_ocorrencias: a.quantidade
+    })),
+    [opcoesFiltradas.assuntos]
+  )
+
+  // Handlers de seleção (recebem objeto, passam código)
+  const handleSelecionarCompetencia = (opcao) => {
+    setCompetenciaSelecionada(opcao?.codigo || null)
+  }
+
+  const handleSelecionarClasse = (opcao) => {
+    setClasseSelecionada(opcao?.codigo || null)
+  }
+
+  const handleSelecionarAssunto = (opcao) => {
+    setAssuntoSelecionado(opcao?.codigo || null)
+  }
 
   return (
     <div className="space-y-4">
@@ -190,40 +149,40 @@ function AbaSelecaoFlexivelErros() {
 
       {/* Grade de seleção */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ContainerSelecao
-          titulo="Competências"
-          icone="🏛️"
-          items={competenciasFiltradas}
-          itemSelecionado={competenciaSelecionada}
-          setItemSelecionado={setCompetenciaSelecionada}
-          busca={buscaCompetencia}
-          setBusca={setBuscaCompetencia}
-          tipo="Cód."
-          carregando={carregandoOpcoes}
+        <ContainerSelecaoBidirecional
+          tipo="competencia"
+          opcoes={opcoesCompetencias}
+          valorSelecionado={competenciaObj}
+          onSelecionar={handleSelecionarCompetencia}
+          onLimpar={() => setCompetenciaSelecionada(null)}
+          loading={carregandoOpcoes}
+          isAtivo={containerAtivo === 'competencia'}
+          setAtivo={() => setContainerAtivo('competencia')}
+          totalOriginal={todasOpcoes.competencias?.length || 0}
         />
 
-        <ContainerSelecao
-          titulo="Classes"
-          icone="📁"
-          items={classesFiltradas}
-          itemSelecionado={classeSelecionada}
-          setItemSelecionado={setClasseSelecionada}
-          busca={buscaClasse}
-          setBusca={setBuscaClasse}
-          tipo="Cód."
-          carregando={carregandoOpcoes}
+        <ContainerSelecaoBidirecional
+          tipo="classe"
+          opcoes={opcoesClasses}
+          valorSelecionado={classeObj}
+          onSelecionar={handleSelecionarClasse}
+          onLimpar={() => setClasseSelecionada(null)}
+          loading={carregandoOpcoes}
+          isAtivo={containerAtivo === 'classe'}
+          setAtivo={() => setContainerAtivo('classe')}
+          totalOriginal={todasOpcoes.classes?.length || 0}
         />
 
-        <ContainerSelecao
-          titulo="Assuntos"
-          icone="📋"
-          items={assuntosFiltrados}
-          itemSelecionado={assuntoSelecionado}
-          setItemSelecionado={setAssuntoSelecionado}
-          busca={buscaAssunto}
-          setBusca={setBuscaAssunto}
-          tipo="Cód."
-          carregando={carregandoOpcoes}
+        <ContainerSelecaoBidirecional
+          tipo="assunto"
+          opcoes={opcoesAssuntos}
+          valorSelecionado={assuntoObj}
+          onSelecionar={handleSelecionarAssunto}
+          onLimpar={() => setAssuntoSelecionado(null)}
+          loading={carregandoOpcoes}
+          isAtivo={containerAtivo === 'assunto'}
+          setAtivo={() => setContainerAtivo('assunto')}
+          totalOriginal={todasOpcoes.assuntos?.length || 0}
         />
       </div>
 
